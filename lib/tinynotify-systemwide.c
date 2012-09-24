@@ -14,6 +14,7 @@
 #include <errno.h>
 
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <pwd.h>
 
 #include <proc/readproc.h>
@@ -23,7 +24,6 @@
 const struct notify_error _error_syscall_failed = { "Required system call %s failed: %s" };
 const NotifyError NOTIFY_ERROR_SYSCALL_FAILED = &_error_syscall_failed;
 const struct notify_error _error_uids_compromised = { "Required system call setresuid() failed to restore UIDs: %s" };
-const NotifyError NOTIFY_ERROR_UIDS_COMPROMISED = &_error_uids_compromised;
 const struct notify_error _error_no_bus_found = { "No D-Bus session bus process found" };
 const NotifyError NOTIFY_ERROR_NO_BUS_FOUND = &_error_no_bus_found;
 
@@ -67,45 +67,28 @@ static char *_proc_getenv(const proc_t* const p, const char* const keystr) {
 	return NULL;
 }
 
-struct _sys_save_state {
-	int filled_in;
-
-	uid_t ruid;
-	uid_t euid;
-	uid_t suid;
-};
-
 static int _notification_send_for_bus(Notification n, NotifySession s,
-		uid_t uid, struct _sys_save_state *saved_state) {
-	int uids_switched = 0;
-	int ret = 0;
+		uid_t uid) {
+	int ret = -1;
 
-	if (!saved_state->filled_in) {
-		if (getresuid(&saved_state->ruid, &saved_state->euid,
-					&saved_state->suid)) {
-			notify_session_set_error(s, NOTIFY_ERROR_SYSCALL_FAILED,
-					"getresuid()", strerror(errno));
-			return 0;
-		}
+	/* D-Bus no longer likes to talk to setuid processes, so we need to
+	 * fork and switch UIDs completely. */
+	pid_t pid = fork();
+	switch (pid)
+	{
+		case -1:
+			break;
 
-		saved_state->filled_in = 1;
-	}
+		case 0:
+			/* We need to use setreuid() because D-Bus checks uid & euid */
+			setreuid(uid, uid);
 
-	/* We need to use setresuid() because D-Bus checks uid & euid,
-	 * and we need to be able to return to root */
-	if (!setresuid(uid, uid, saved_state->suid))
-		uids_switched++;
+			/* Ensure getting a new connection. */
+			notify_session_disconnect(s);
+			exit(!!notification_send(n, s));
 
-	/* Ensure getting a new connection. */
-	notify_session_disconnect(s);
-	ret = !notification_send(n, s);
-
-	if (uids_switched && setresuid(saved_state->ruid, saved_state->euid,
-				saved_state->suid)) {
-		notify_session_set_error(s, NOTIFY_ERROR_UIDS_COMPROMISED, strerror(errno));
-		saved_state->filled_in = 0;
-		/* XXX: what if notification_send() succeeded? */
-		return 0;
+		default:
+			waitpid(pid, &ret, 0);
 	}
 
 	return ret;
@@ -115,7 +98,6 @@ int notification_send_systemwide(Notification n, NotifySession s) {
 	PROCTAB *proc;
 	proc_t *p = NULL;
 	int ret = 0;
-	struct _sys_save_state saved_state = {0};
 
 	proc = openproc(PROC_FILLCOM | PROC_FILLENV);
 	if (!proc) {
@@ -171,10 +153,8 @@ int notification_send_systemwide(Notification n, NotifySession s) {
 				}
 			}
 
-			if (_notification_send_for_bus(n, s, p->euid, &saved_state))
+			if (!_notification_send_for_bus(n, s, p->euid))
 				ret += 1;
-			else if (!saved_state.filled_in) /* oh no, early failure! */
-				break;
 		}
 	}
 	closeproc(proc);

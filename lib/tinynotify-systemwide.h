@@ -32,15 +32,6 @@
  */
 extern const NotifyError NOTIFY_ERROR_SYSCALL_FAILED;
 /**
- * NOTIFY_ERROR_UIDS_COMPROMISED
- *
- * An error raised when setresuid() fails to restore the original caller UID.
- *
- * This means that the application has lost its original UID and should
- * terminate ASAP.
- */
-extern const NotifyError NOTIFY_ERROR_UIDS_COMPROMISED;
-/**
  * NOTIFY_ERROR_NO_BUS_FOUND
  *
  * An error returned by notification_send_systemwide() when it was unable
@@ -57,6 +48,8 @@ extern const NotifyError NOTIFY_ERROR_NO_BUS_FOUND;
  * @session: session to send the notification through
  *
  * Send a notification to all notification daemons found (in procfs).
+ *
+ * Please note that this function does fork().
  *
  * Todo: support formatstring args.
  *

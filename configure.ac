@@ -13,7 +13,7 @@ LT_INIT([disable-static])
 GTK_DOC_CHECK([1.15])
 
 PKG_CHECK_MODULES([LIBTINYNOTIFY], [libtinynotify])
-AC_CHECK_FUNCS([setresuid],,
+AC_CHECK_FUNCS([setreuid],,
 	[AC_MSG_ERROR([One of required system library functions was not found!])])
 PKG_CHECK_MODULES([PROCPS], [libprocps],, [
 	AC_CHECK_LIB([proc], [readproc],,
